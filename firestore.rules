@@ -199,7 +199,8 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------------
-    // 6. ATTENDANCES: Daftar Hadir Terpisah (Atlet & Siswa)
+    // ------------------------------------------------------------------------
+    // 6. ATTENDANCES: Daftar Hadir Siswa / Peserta
     // ------------------------------------------------------------------------
     match /attendances/{attendanceId} {
       allow read: if isSignedIn() && (
@@ -229,6 +230,29 @@ service cloud.firestore {
           )
         )
       );
+
+      // Validasi & perubahan status oleh Pelatih / Admin & Pelatih / Super Admin
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id))
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------
+    // 7. COACH_ATTENDANCES: Daftar Hadir Pelatih (Penggajihan)
+    // ------------------------------------------------------------------------
+    match /coach_attendances/{coachAttendanceId} {
+      allow read: if isSignedIn() && (isSuperAdmin() || isAdminPelatih() || isPelatih());
+      allow create, update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && request.resource.data.coach_uid == request.auth.uid)
+      );
+      allow delete: if isSuperAdmin();
+    }
 
       // Validasi & perubahan status oleh Pelatih / Admin & Pelatih / Super Admin
       allow update: if isSignedIn() && (
