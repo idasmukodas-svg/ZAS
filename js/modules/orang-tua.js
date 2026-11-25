@@ -44,31 +44,72 @@ function clearQrParamsFromUrl() {
   }
 }
 
-async function fetchParentState(user) {
-  const [classesSnap, participantsSnap, userSnap] = await Promise.all([
-    getDocs(collection(db, "classes")),
-    getDocs(collection(db, "participants")),
-    getDoc(doc(db, "users", user.uid))
-  ]);
+function calculateAgeAndKU(dobString) {
+  if (!dobString) return { age: null, ku: "" };
+  const birthYear = Number(String(dobString).slice(0, 4));
+  if (!birthYear || Number.isNaN(birthYear)) return { age: null, ku: "" };
 
+  const age = Math.max(0, new Date().getFullYear() - birthYear);
+  let ku = "Senior";
+  if (age <= 9) ku = "KU-5";
+  else if (age <= 11) ku = "KU-4";
+  else if (age <= 13) ku = "KU-3";
+  else if (age <= 15) ku = "KU-2";
+  else if (age <= 18) ku = "KU-1";
+
+  return { age, ku };
+}
+
+async function fetchParentState(user) {
+  const userSnap = await getDoc(doc(db, "users", user.uid));
   const freshUser = userSnap.exists() ? { uid: user.uid, ...userSnap.data() } : user;
+
+  let allClasses = [];
+  try {
+    const classesSnap = await getDocs(collection(db, "classes"));
+    allClasses = classesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (clsErr) {
+    console.warn("Gagal memuat daftar kelas:", clsErr?.code || clsErr);
+  }
+  const classMap = Object.fromEntries(allClasses.map((c) => [c.id, c]));
+
+  // Ambil hanya dokumen atlet milik orang tua ini (hindari getDocs seluruh koleksi participants)
+  const childMap = new Map();
+
+  try {
+    const byParentSnap = await getDocs(
+      query(collection(db, "participants"), where("parent_uid", "==", freshUser.uid))
+    );
+    byParentSnap.docs.forEach((d) => {
+      childMap.set(d.id, { id: d.id, ...d.data() });
+    });
+  } catch (qErr) {
+    console.warn("Query parent_uid participants:", qErr?.code || qErr);
+  }
+
   const linkedIds = Array.isArray(freshUser.linked_participants)
     ? freshUser.linked_participants
     : [];
 
-  const allClasses = classesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const classMap = Object.fromEntries(allClasses.map((c) => [c.id, c]));
+  for (const pid of linkedIds) {
+    if (pid && !childMap.has(pid)) {
+      try {
+        const pSnap = await getDoc(doc(db, "participants", pid));
+        if (pSnap.exists()) {
+          childMap.set(pSnap.id, { id: pSnap.id, ...pSnap.data() });
+        }
+      } catch (_) {
+        // Lewati jika dokumen tidak ditemukan atau belum diizinkan
+      }
+    }
+  }
 
-  const allParticipants = participantsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const children = allParticipants.filter(
-    (p) => p.parent_uid === freshUser.uid || linkedIds.includes(p.id)
-  );
-
+  const children = Array.from(childMap.values());
   return { freshUser, allClasses, classMap, children };
 }
 
 // ============================================================================
-// 1. PROFIL ANAK & ABSENSI (PIN / QR UNTUK HADIR, SERTA IZIN / SAKIT)
+// 1. PROFIL ATLET ANAK & ABSENSI (PIN / QR UNTUK HADIR, SERTA IZIN / SAKIT)
 // ============================================================================
 async function renderAbsensiAnak(container, state) {
   const { freshUser, classMap, children } = state;
@@ -79,22 +120,26 @@ async function renderAbsensiAnak(container, state) {
   const childAttMap = {};
 
   if (childIds.length > 0) {
-    const attSnap = await getDocs(
-      query(collection(db, "attendances"), where("tanggal", "==", todayStr))
-    );
-    attSnap.docs.forEach((d) => {
-      const data = d.data();
-      if (childIds.includes(data.participant_id)) {
-        childAttMap[data.participant_id] = { id: d.id, ...data };
-      }
-    });
+    try {
+      const attSnap = await getDocs(
+        query(collection(db, "attendances"), where("tanggal", "==", todayStr))
+      );
+      attSnap.docs.forEach((d) => {
+        const data = d.data();
+        if (childIds.includes(data.participant_id)) {
+          childAttMap[data.participant_id] = { id: d.id, ...data };
+        }
+      });
+    } catch (attErr) {
+      console.warn("Gagal memuat absensi hari ini:", attErr?.code || attErr);
+    }
   }
 
   container.innerHTML = `
     <div class="space-y-6">
       <div class="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
-          <h2 class="text-xl font-bold text-slate-800">Profil Anak & Absensi Kehadiran</h2>
+          <h2 class="text-xl font-bold text-slate-800">Profil Atlet & Absensi Kehadiran</h2>
           <p class="text-xs text-slate-500 mt-0.5">
             Tanggal: <strong>${formatTanggalIndo(todayStr)}</strong> · Kehadiran <strong>Hadir</strong> memakai PIN 4 digit / QR Code sesi kolam; <strong>Izin / Sakit</strong> dapat diajukan langsung.
           </p>
@@ -107,7 +152,7 @@ async function renderAbsensiAnak(container, state) {
         <div class="bg-sky-50 border border-sky-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div class="text-xs text-sky-900">
             <p class="font-bold text-sm">QR Code Sesi Terdeteksi</p>
-            <p class="mt-0.5">Sesi: <code class="bg-white px-1.5 py-0.5 rounded border border-sky-200">${escapeHtml(qrParams.sessionId)}</code> · Pilih anak lalu klik <strong>Check-in Hadir (PIN / QR)</strong> untuk menyelesaikan absensi.</p>
+            <p class="mt-0.5">Sesi: <code class="bg-white px-1.5 py-0.5 rounded border border-sky-200">${escapeHtml(qrParams.sessionId)}</code> · Pilih atlet lalu klik <strong>Check-in Hadir</strong> untuk menyelesaikan absensi.</p>
           </div>
           <button type="button" id="btn-clear-qr" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-sky-800 border border-sky-200 hover:bg-sky-100 w-fit">
             Bersihkan Parameter QR
@@ -120,8 +165,9 @@ async function renderAbsensiAnak(container, state) {
       ${
         children.length === 0
           ? `
-        <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center">
-          <p class="text-sm text-slate-600">Belum ada data anak tertaut ke akun ini.</p>
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 text-center space-y-2">
+          <p class="text-sm font-semibold text-slate-700">Belum ada data atlet tertaut ke akun ini.</p>
+          <p class="text-xs text-slate-500">Gunakan tab <strong>Daftar Atlet</strong> untuk menambahkan data atlet ke akun orang tua Anda.</p>
         </div>
       `
           : `
@@ -132,6 +178,7 @@ async function renderAbsensiAnak(container, state) {
               const todayAtt = childAttMap[child.id];
               const isPending = child.status_keanggotaan === "pending_verifikasi";
               const isActiveMember = child.status_keanggotaan === "aktif";
+              const kuLabel = child.kelompok_umur || calculateAgeAndKU(child.tanggal_lahir).ku || "-";
 
               return `
                 <div class="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs" data-child-card="${child.id}">
@@ -139,12 +186,8 @@ async function renderAbsensiAnak(container, state) {
                     <div>
                       <div class="flex flex-wrap items-center gap-2">
                         <h3 class="text-lg font-bold text-slate-800">${escapeHtml(child.nama_lengkap)}</h3>
-                        <span class="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                          child.kategori === "atlet"
-                            ? "bg-sky-100 text-sky-800"
-                            : "bg-indigo-100 text-indigo-800"
-                        }">
-                          ${escapeHtml(child.kategori || "siswa")}
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-sky-100 text-sky-800">
+                          ATLET · ${escapeHtml(kuLabel)}
                         </span>
                       </div>
                       <p class="text-xs text-slate-500 mt-1">
@@ -158,7 +201,7 @@ async function renderAbsensiAnak(container, state) {
 
                   <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200/80">
                     <div><span class="text-slate-400">Tgl Lahir:</span> <strong class="text-slate-700">${escapeHtml(child.tanggal_lahir || "-")}</strong></div>
-                    <div><span class="text-slate-400">Kelompok Umur:</span> <strong class="text-slate-700">${escapeHtml(child.kelompok_umur || "-")}</strong></div>
+                    <div><span class="text-slate-400">Asal Sekolah:</span> <strong class="text-slate-700">${escapeHtml(child.asal_sekolah || "-")}</strong></div>
                     <div class="col-span-2"><span class="text-slate-400">Jadwal Kelas:</span> <strong class="text-slate-700">${escapeHtml(cls?.jadwal_teks || "Mengikuti info pelatih")}</strong></div>
                     <div class="col-span-2"><span class="text-slate-400">Catatan Medis:</span> <strong class="text-slate-700">${escapeHtml(child.catatan_medis || "-")}</strong></div>
                   </div>
@@ -189,9 +232,9 @@ async function renderAbsensiAnak(container, state) {
 
                     ${
                       isPending
-                        ? `<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-lg">Akun/peserta masih menunggu verifikasi & penempatan kelas oleh Admin/Pelatih.</p>`
+                        ? `<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-lg">Data atlet masih menunggu verifikasi & penempatan kelas oleh Admin/Pelatih.</p>`
                         : !isActiveMember || !child.class_id
-                        ? `<p class="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg">Peserta belum berstatus aktif atau belum memiliki kelas latihan.</p>`
+                        ? `<p class="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg">Atlet belum berstatus aktif atau belum memiliki kelas latihan.</p>`
                         : `
                       <!-- Form Check-in Hadir dengan PIN / QR -->
                       <div class="space-y-2 pt-1">
@@ -258,7 +301,6 @@ async function renderAbsensiAnak(container, state) {
     await renderAbsensiAnak(container, nextState);
   });
 
-  // Handler Check-in Hadir (Validasi PIN 4 Digit atau QR Token pada Sesi Aktif)
   container.addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-action]");
     if (!btn) return;
@@ -315,7 +357,7 @@ async function renderAbsensiAnak(container, state) {
           session_id: validSession.id,
           participant_id: child.id,
           nama_peserta: child.nama_lengkap,
-          kategori: child.kategori || "siswa",
+          kategori: "atlet",
           status_kehadiran: "hadir",
           metode_validasi: usingQrToken ? "qr_sesi" : "pin_sesi",
           keterangan_ortu: usingQrToken ? "Check-in QR di kolam" : "Check-in PIN di kolam",
@@ -349,7 +391,7 @@ async function renderAbsensiAnak(container, state) {
           class_id: child.class_id,
           participant_id: child.id,
           nama_peserta: child.nama_lengkap,
-          kategori: child.kategori || "siswa",
+          kategori: "atlet",
           status_kehadiran: excuseType,
           metode_validasi: "input_orang_tua",
           keterangan_ortu: excuseNote,
@@ -370,27 +412,34 @@ async function renderAbsensiAnak(container, state) {
 }
 
 // ============================================================================
-// 2. JADWAL & PROGRAM LATIHAN ANAK
+// 2. JADWAL & PROGRAM LATIHAN ATLET
 // ============================================================================
 async function renderJadwalDanProgram(container, state) {
   const { classMap, children } = state;
   const activeClassIds = new Set(children.map((c) => c.class_id).filter(Boolean));
 
-  const prgSnap = await getDocs(collection(db, "training_programs"));
-  const visiblePrograms = prgSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((p) => p.tampilkan_ke_orangtua === true && activeClassIds.has(p.class_id))
-    .sort((a, b) => String(b.tanggal_latihan || "").localeCompare(String(a.tanggal_latihan || "")));
+  let visiblePrograms = [];
+  if (activeClassIds.size > 0) {
+    try {
+      const prgSnap = await getDocs(collection(db, "training_programs"));
+      visiblePrograms = prgSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((p) => p.tampilkan_ke_orangtua === true && activeClassIds.has(p.class_id))
+        .sort((a, b) => String(b.tanggal_latihan || "").localeCompare(String(a.tanggal_latihan || "")));
+    } catch (prgErr) {
+      console.warn("Gagal memuat program latihan:", prgErr?.code || prgErr);
+    }
+  }
 
   container.innerHTML = `
     <div class="space-y-6">
       <div class="bg-white rounded-2xl border border-slate-200 p-5">
         <h2 class="text-lg font-bold text-slate-800">Jadwal Kelas & Ringkasan Program Latihan</h2>
-        <p class="text-xs text-slate-500 mt-0.5">Program latihan yang dibagikan pelatih untuk kelas anak Anda.</p>
+        <p class="text-xs text-slate-500 mt-0.5">Program latihan yang dibagikan pelatih untuk kelas atlet Anda.</p>
 
         ${
           children.length === 0
-            ? `<p class="text-sm text-slate-500 mt-4">Belum ada anak terdaftar pada akun ini.</p>`
+            ? `<p class="text-sm text-slate-500 mt-4">Belum ada atlet terdaftar pada akun ini.</p>`
             : `
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
             ${children
@@ -398,7 +447,7 @@ async function renderJadwalDanProgram(container, state) {
                 const cls = classMap[ch.class_id];
                 return `
                   <div class="border border-slate-200 rounded-xl p-3.5 bg-slate-50/70">
-                    <div class="font-bold text-slate-800">${escapeHtml(ch.nama_lengkap)} <span class="text-xs uppercase text-sky-700">(${escapeHtml(ch.kategori || "siswa")})</span></div>
+                    <div class="font-bold text-slate-800">${escapeHtml(ch.nama_lengkap)} <span class="text-xs uppercase text-sky-700">(ATLET)</span></div>
                     <div class="text-xs text-slate-600 mt-1">Kelas: <strong>${escapeHtml(cls?.nama_kelas || "Belum ditempatkan")}</strong></div>
                     <div class="text-xs text-slate-500 mt-0.5">Jadwal: ${escapeHtml(cls?.jadwal_teks || "Menunggu jadwal kelas")}</div>
                   </div>
@@ -414,7 +463,7 @@ async function renderJadwalDanProgram(container, state) {
         <h3 class="font-bold text-slate-800">Program Latihan Terbaru</h3>
         ${
           visiblePrograms.length === 0
-            ? `<p class="text-sm text-slate-500">Belum ada program latihan yang dibagikan pelatih untuk kelas anak Anda.</p>`
+            ? `<p class="text-sm text-slate-500">Belum ada program latihan yang dibagikan pelatih untuk kelas atlet Anda.</p>`
             : `
           <div class="space-y-3">
             ${visiblePrograms
@@ -459,21 +508,21 @@ async function renderJadwalDanProgram(container, state) {
 }
 
 // ============================================================================
-// 3. PENDAFTARAN ANAK TAMBAHAN PADA AKUN ORANG TUA
+// 3. PENDAFTARAN ATLET TAMBAHAN PADA AKUN ORANG TUA
 // ============================================================================
 async function renderTambahAnak(container, state) {
   const { freshUser } = state;
 
   container.innerHTML = `
     <div class="max-w-xl bg-white rounded-2xl border border-slate-200 p-6">
-      <h2 class="text-lg font-bold text-slate-800">Daftarkan Anak Tambahan</h2>
+      <h2 class="text-lg font-bold text-slate-800">Daftarkan Atlet Tambahan</h2>
       <p class="text-xs text-slate-500 mt-0.5 mb-4">
-        Tambahkan anak lain ke akun orang tua <strong>${escapeHtml(freshUser.nama || freshUser.email)}</strong>. Data akan masuk ke antrean verifikasi Admin/Pelatih.
+        Tambahkan atlet lain ke akun orang tua <strong>${escapeHtml(freshUser.nama || freshUser.email)}</strong>. Data akan masuk ke antrean verifikasi Admin/Pelatih.
       </p>
 
       <form id="form-add-child" class="space-y-3.5">
         <div>
-          <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap Anak</label>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap Atlet</label>
           <input type="text" id="add-child-name" required class="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm" />
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -484,24 +533,21 @@ async function renderTambahAnak(container, state) {
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Jenis Kelamin</label>
             <select id="add-child-gender" class="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-              <option value="L">Laki-laki</option>
-              <option value="P">Perempuan</option>
+              <option value="L">Putra (L)</option>
+              <option value="P">Putri (P)</option>
             </select>
           </div>
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-600 mb-1">Kategori Awal yang Diminati</label>
-          <select id="add-child-category" class="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-            <option value="siswa">Siswa (Belajar Renang / Pemula)</option>
-            <option value="atlet">Atlet (Pembinaan & Prestasi)</option>
-          </select>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Asal Sekolah</label>
+          <input type="text" id="add-child-school" required class="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama sekolah atlet" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-600 mb-1">Catatan Medis / Alergi (Opsional)</label>
           <input type="text" id="add-child-medical" class="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Contoh: Tidak ada / asma ringan" />
         </div>
         <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">
-          Kirim Pendaftaran Anak
+          Kirim Pendaftaran Atlet
         </button>
       </form>
     </div>
@@ -512,11 +558,12 @@ async function renderTambahAnak(container, state) {
     const childName = container.querySelector("#add-child-name").value.trim();
     const childDob = container.querySelector("#add-child-dob").value;
     const childGender = container.querySelector("#add-child-gender").value;
-    const category = container.querySelector("#add-child-category").value;
+    const schoolName = container.querySelector("#add-child-school").value.trim();
     const medical = container.querySelector("#add-child-medical").value.trim() || "Tidak ada catatan khusus";
 
     if (!childName || !childDob) return;
 
+    const { ku: kelompokUmur } = calculateAgeAndKU(childDob);
     const participantId = `pst_${freshUser.uid.slice(0, 8)}_${Date.now().toString().slice(-5)}`;
 
     try {
@@ -526,8 +573,9 @@ async function renderTambahAnak(container, state) {
         nama_panggilan: childName.split(" ")[0],
         tanggal_lahir: childDob,
         jenis_kelamin: childGender,
-        kelompok_umur: "",
-        kategori: category,
+        kelompok_umur: kelompokUmur,
+        asal_sekolah: schoolName,
+        kategori: "atlet",
         class_id: "",
         parent_uid: freshUser.uid,
         nama_orang_tua: freshUser.nama || "",
@@ -542,12 +590,12 @@ async function renderTambahAnak(container, state) {
         linked_participants: arrayUnion(participantId)
       });
 
-      showToast(`Pendaftaran ${childName} berhasil dikirim! Menunggu verifikasi admin.`, "success");
+      showToast(`Pendaftaran atlet ${childName} berhasil dikirim! Menunggu verifikasi admin.`, "success");
       const nextState = await fetchParentState(freshUser);
       await renderAbsensiAnak(container, nextState);
     } catch (err) {
       console.error(err);
-      showToast("Gagal menambahkan data anak.", "error");
+      showToast("Gagal menambahkan data atlet.", "error");
     }
   });
 }
