@@ -1,13 +1,13 @@
 import { showToast } from "./utils.js";
 
 const ROLE_MENUS = {
-  super_admin: [
+super_admin: [
     { id: "overview", label: "Ringkasan", module: "./modules/super-admin.js", view: "overview" },
     { id: "verifikasi", label: "Verifikasi & Kelas", module: "./modules/super-admin.js", view: "verifikasi" },
     { id: "users", label: "Pelatih & Role", module: "./modules/super-admin.js", view: "users" },
     { id: "absensi-pelatih", label: "Hadir Pelatih", module: "./modules/super-admin.js", view: "absensi_pelatih" },
-    { id: "absensi-siswa", label: "Hadir Siswa", module: "./modules/super-admin.js", view: "absensi_siswa" },
-    { id: "database", label: "Database Atlet/Siswa", module: "./modules/super-admin.js", view: "database" }
+    { id: "absensi-siswa", label: "Hadir Atlet", module: "./modules/super-admin.js", view: "absensi_siswa" },
+    { id: "database", label: "Database Atlet", module: "./modules/super-admin.js", view: "database" }
   ],
   admin_pelatih: [
     { id: "sesi-kelas", label: "Sesi & PIN/QR", module: "./modules/pelatih.js", view: "sesi" },
