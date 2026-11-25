@@ -87,6 +87,7 @@ service cloud.firestore {
 
       allow create: if isSignedIn() && (
         isSuperAdmin() ||
+        isAdminPelatih() ||
         (
           request.auth.uid == userId &&
           request.resource.data.role == "orang_tua"
@@ -99,6 +100,36 @@ service cloud.firestore {
           request.auth.uid == userId &&
           request.resource.data.role == resource.data.role
         )
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------
+    // 3. PARTICIPANTS: Database Atlet
+    // ------------------------------------------------------------------------
+    match /participants/{participantId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        isPelatih() ||
+        isLinkedParticipant(participantId) ||
+        (resource != null && resource.data.parent_uid == request.auth.uid)
+      );
+
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (
+          request.resource.data.parent_uid == request.auth.uid &&
+          request.resource.data.status_keanggotaan == "pending_verifikasi"
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id))
       );
 
       allow delete: if isSuperAdmin();
