@@ -1,3 +1,10 @@
+import { auth, db } from "./firebase-config.js";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   doc,
   getDoc,
@@ -8,11 +15,6 @@ import {
   collection,
   query,
   where,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-  getDoc,
-  setDoc,
-  writeBatch,
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { getRoleLabel, showToast } from "./utils.js";
