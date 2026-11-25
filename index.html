@@ -3,7 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sistem Manajemen Klub Renang</title>
+  <title>ZAS Swimming Club Manager</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/jpeg" href="./logo.jpeg" />
+  <meta name="theme-color" content="#0284c7" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="ZAS SwimClub" />
+  <link rel="apple-touch-icon" href="./logo.jpeg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -11,12 +17,20 @@
 
   <!-- Navbar Utama (Tampil setelah login) -->
   <header id="app-header" class="hidden bg-sky-700 text-white shadow-md sticky top-0 z-40">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div>
-        <h1 class="font-bold text-lg tracking-tight">SwimClub Manager</h1>
-        <p id="user-role-badge" class="text-xs text-sky-200 uppercase font-semibold"></p>
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <img
+          src="./logo.jpeg"
+          alt="Logo ZAS"
+          class="w-9 h-9 object-contain rounded-lg border border-white/25 bg-white p-1 shrink-0"
+          onerror="this.style.display='none'"
+        />
+        <div class="min-w-0">
+          <h1 class="font-bold text-base sm:text-lg tracking-tight leading-tight truncate">ZAS Swimming Club</h1>
+          <p id="user-role-badge" class="text-[11px] text-sky-200 uppercase font-semibold truncate"></p>
+        </div>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 shrink-0">
         <span id="user-display-name" class="text-sm hidden sm:inline"></span>
         <button id="btn-logout" class="bg-sky-800 hover:bg-sky-900 px-3 py-1.5 rounded-lg text-xs font-medium transition">
           Keluar
@@ -37,11 +51,22 @@
       <p class="mt-3 text-sm text-slate-500">Memuat sistem klub...</p>
     </div>
 
-    <!-- Halaman Auth (Login & Pendaftaran Peserta Baru) -->
-    <section id="auth-view" class="hidden max-w-md mx-auto mt-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+    <!-- Halaman Auth (Login & Pendaftaran Atlet Baru) -->
+    <section id="auth-view" class="hidden max-w-md mx-auto mt-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+      <div class="flex flex-col items-center text-center mb-6">
+        <img
+          src="./logo.jpeg"
+          alt="Logo ZAS Swimming Club"
+          class="w-24 h-24 object-contain rounded-2xl border border-slate-200 bg-white p-2 shadow-xs mb-3"
+          onerror="this.style.display='none'"
+        />
+        <h1 class="text-xl font-extrabold text-slate-800 tracking-tight">ZAS Swimming Club</h1>
+        <p class="text-xs text-slate-500 mt-0.5">Sistem Manajemen Atlet, Latihan & Kehadiran</p>
+      </div>
+
       <div class="flex border-b border-slate-200 mb-5">
         <button id="tab-login" class="flex-1 pb-2.5 text-sm font-semibold border-b-2 border-sky-600 text-sky-700">Masuk Akun</button>
-        <button id="tab-register" class="flex-1 pb-2.5 text-sm font-semibold border-b-2 border-transparent text-slate-500">Daftar Peserta Baru</button>
+        <button id="tab-register" class="flex-1 pb-2.5 text-sm font-semibold border-b-2 border-transparent text-slate-500">Daftar Atlet Baru</button>
       </div>
 
       <!-- Form Login -->
@@ -59,10 +84,10 @@
         </button>
       </form>
 
-      <!-- Form Pendaftaran Orang Tua & Peserta Baru -->
+      <!-- Form Pendaftaran Orang Tua & Atlet Baru -->
       <form id="form-register" class="hidden space-y-3.5">
         <p class="text-xs text-slate-500 bg-sky-50 p-2.5 rounded-lg border border-sky-100">
-          Pendaftaran dilakukan oleh Orang Tua/Wali. Akun ini sekaligus digunakan untuk absensi kehadiran anak di kolam.
+          Pendaftaran dilakukan oleh Orang Tua/Wali. Akun ini sekaligus digunakan untuk absensi kehadiran atlet di kolam.
         </p>
         <div>
           <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Orang Tua / Wali</label>
@@ -84,7 +109,7 @@
         </div>
         <hr class="my-2 border-slate-200" />
         <div>
-          <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap Anak (Peserta)</label>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap Atlet</label>
           <input type="text" id="reg-child-name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -94,18 +119,15 @@
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Jenis Kelamin</label>
-            <select id="reg-child-gender" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-              <option value="L">Laki-laki</option>
-              <option value="P">Perempuan</option>
+            <select id="reg-child-gender" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="L">Putra (L)</option>
+              <option value="P">Putri (P)</option>
             </select>
           </div>
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-600 mb-1">Kategori Awal yang Diminati</label>
-          <select id="reg-category" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-            <option value="siswa">Siswa (Belajar Renang / Pemula)</option>
-            <option value="atlet">Atlet (Pembinaan & Prestasi)</option>
-          </select>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Asal Sekolah</label>
+          <input type="text" id="reg-school" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama sekolah atlet" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-600 mb-1">Catatan Medis / Alergi (Opsional)</label>
@@ -115,6 +137,10 @@
           Kirim Pendaftaran
         </button>
       </form>
+
+      <p class="text-center text-[11px] text-slate-400 mt-6">
+        Developer: <span class="font-semibold text-slate-600">Trihira Studio Tech by Idaz</span>
+      </p>
     </section>
 
     <!-- Workspace Dinamis Berdasarkan Role -->
