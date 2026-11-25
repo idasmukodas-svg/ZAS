@@ -61,27 +61,32 @@ async function getOrCreateUserProfile(firebaseUser) {
     return { uid: firebaseUser.uid, ...snap.data() };
   }
 
-  // Cek apakah Super Admin sudah membuat profil pelatih/pengguna berdasarkan email ini
   const normalizedEmail = (firebaseUser.email || "").trim().toLowerCase();
-  if (normalizedEmail) {
-    const q = query(collection(db, "users"), where("email", "==", normalizedEmail));
-    const preSnap = await getDocs(q);
-    const preDoc = preSnap.docs.find((d) => d.id !== firebaseUser.uid);
 
-    if (preDoc) {
-      const preData = preDoc.data();
-      const mergedProfile = {
-        ...preData,
-        email: normalizedEmail,
-        status_akun: preData.status_akun || "aktif",
-        created_at: preData.created_at || new Date().toISOString(),
-        linked_auth_at: new Date().toISOString()
-      };
-      await setDoc(userRef, mergedProfile);
-      if (preDoc.id.startsWith("coach_") || preDoc.id.startsWith("usr_")) {
-        await deleteDoc(doc(db, "users", preDoc.id));
+  // Coba sinkronkan profil pelatih yang sudah diinput Super Admin berdasarkan email
+  if (normalizedEmail) {
+    try {
+      const q = query(collection(db, "users"), where("email", "==", normalizedEmail));
+      const preSnap = await getDocs(q);
+      const preDoc = preSnap.docs.find((d) => d.id !== firebaseUser.uid);
+
+      if (preDoc) {
+        const preData = preDoc.data();
+        const mergedProfile = {
+          ...preData,
+          email: normalizedEmail,
+          status_akun: preData.status_akun || "aktif",
+          created_at: preData.created_at || new Date().toISOString(),
+          linked_auth_at: new Date().toISOString()
+        };
+        await setDoc(userRef, mergedProfile);
+        if (preDoc.id.startsWith("coach_") || preDoc.id.startsWith("usr_")) {
+          await deleteDoc(doc(db, "users", preDoc.id));
+        }
+        return { uid: firebaseUser.uid, ...mergedProfile };
       }
-      return { uid: firebaseUser.uid, ...mergedProfile };
+    } catch (lookupErr) {
+      console.warn("Lewati lookup email pra-profil:", lookupErr?.code || lookupErr);
     }
   }
 
