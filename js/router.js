@@ -4,8 +4,8 @@ const ROLE_MENUS = {
   super_admin: [
     { id: "overview", label: "Ringkasan", module: "./modules/super-admin.js", view: "overview" },
     { id: "verifikasi", label: "Verifikasi & Kelas", module: "./modules/super-admin.js", view: "verifikasi" },
-    { id: "users", label: "Akun & Role", module: "./modules/super-admin.js", view: "users" },
-    { id: "absensi-atlet", label: "Hadir Atlet", module: "./modules/super-admin.js", view: "absensi_atlet" },
+    { id: "users", label: "Pelatih & Role", module: "./modules/super-admin.js", view: "users" },
+    { id: "absensi-pelatih", label: "Hadir Pelatih", module: "./modules/super-admin.js", view: "absensi_pelatih" },
     { id: "absensi-siswa", label: "Hadir Siswa", module: "./modules/super-admin.js", view: "absensi_siswa" },
     { id: "database", label: "Database Atlet/Siswa", module: "./modules/super-admin.js", view: "database" }
   ],
