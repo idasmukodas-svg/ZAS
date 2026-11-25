@@ -48,21 +48,43 @@ function renderQrIntoElement(element, text) {
 }
 
 async function fetchCoachState(user) {
-  const [classesSnap, participantsSnap, sessionsSnap] = await Promise.all([
+  const [classesSnap, participantsSnap, sessionsSnap, usersSnap] = await Promise.all([
     getDocs(collection(db, "classes")),
     getDocs(collection(db, "participants")),
-    getDocs(query(collection(db, "attendance_sessions"), where("tanggal", "==", getTodayISO())))
+    getDocs(query(collection(db, "attendance_sessions"), where("tanggal", "==", getTodayISO()))),
+    getDocs(collection(db, "users"))
   ]);
 
   const allClasses = classesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const assignedIds = Array.isArray(user.assigned_classes) ? user.assigned_classes : [];
+  const allUsers = usersSnap.docs.map((d) => ({ id: d.id, uid: d.id, ...d.data() }));
 
-  // Super Admin / Admin Pelatih bisa melihat semua kelas jika assigned_classes kosong; Pelatih difokuskan ke kelas yang diampu
+  const normalizedEmail = (user.email || "").trim().toLowerCase();
+  const matchingCoachDocs = allUsers.filter(
+    (u) => u.uid === user.uid || (normalizedEmail && (u.email || "").trim().toLowerCase() === normalizedEmail)
+  );
+
+  const coachCandidateIds = new Set([
+    user.uid,
+    ...matchingCoachDocs.map((u) => u.uid)
+  ]);
+
+  const assignedSet = new Set(Array.isArray(user.assigned_classes) ? user.assigned_classes : []);
+  matchingCoachDocs.forEach((u) => {
+    if (Array.isArray(u.assigned_classes)) {
+      u.assigned_classes.forEach((cid) => assignedSet.add(cid));
+    }
+  });
+
+  const assignedIds = Array.from(assignedSet);
+
+  // Super Admin / Admin Pelatih bisa melihat semua kelas jika belum dibatasi kelas tertentu; Pelatih difokuskan ke kelas yang diampu
   const coachClasses =
     user.role === "super_admin" || (user.role === "admin_pelatih" && assignedIds.length === 0)
       ? allClasses
       : allClasses.filter(
-          (c) => assignedIds.includes(c.id) || (Array.isArray(c.coach_uids) && c.coach_uids.includes(user.uid))
+          (c) =>
+            assignedIds.includes(c.id) ||
+            (Array.isArray(c.coach_uids) && c.coach_uids.some((cid) => coachCandidateIds.has(cid)))
         );
 
   const participants = participantsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -75,14 +97,14 @@ async function fetchCoachState(user) {
 // 1. SESI ABSENSI HARIAN (PIN 4 DIGIT + QR CODE) & VALIDASI KEHADIRAN
 // ============================================================================
 async function renderSesiAbsensi(container, state, user) {
-  const { coachClasses, participants, todaySessions } = state;
+  const { coachClasses, participants } = state;
   const todayStr = getTodayISO();
 
   if (coachClasses.length === 0) {
     container.innerHTML = `
       <div class="bg-white rounded-2xl border border-slate-200 p-6">
         <h2 class="text-lg font-bold text-slate-800">Sesi Absensi & PIN/QR Kolam</h2>
-        <p class="text-sm text-slate-500 mt-1">Akun Anda belum ditugaskan ke kelas manapun. Hubungi Super Admin / Admin & Pelatih untuk penugasan kelas.</p>
+        <p class="text-sm text-slate-500 mt-1">Akun Anda belum ditugaskan ke kelas manapun. Hubungi Super Admin untuk penugasan pelatih ke kelas pada tab <strong>Verifikasi & Kelas</strong> atau <strong>Pelatih & Role</strong>.</p>
       </div>
     `;
     return;
@@ -95,13 +117,16 @@ async function renderSesiAbsensi(container, state, user) {
       <div class="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 class="text-xl font-bold text-slate-800">Sesi Absensi Harian & Validasi Kehadiran</h2>
-          <p class="text-xs text-slate-500 mt-0.5">Tanggal: <strong>${formatTanggalIndo(todayStr)}</strong> · PIN 4 digit & QR Code digunakan orang tua saat check-in di kolam.</p>
+          <p class="text-xs text-slate-500 mt-0.5">Tanggal: <strong>${formatTanggalIndo(todayStr)}</strong> · Membuka sesi otomatis mencatat kehadiran pelatih & menampilkan PIN 4 digit / QR Code untuk orang tua.</p>
         </div>
         <div class="min-w-[220px]">
           <label class="block text-xs font-semibold text-slate-600 mb-1">Pilih Kelas Aktif</label>
           <select id="coach-class-select" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-medium bg-white">
             ${coachClasses
-              .map((c) => `<option value="${c.id}" ${c.id === defaultClassId ? "selected" : ""}>${escapeHtml(c.nama_kelas)} (${escapeHtml(c.jenis_kelas || "kelas")})</option>`)
+              .map(
+                (c) =>
+                  `<option value="${c.id}" ${c.id === defaultClassId ? "selected" : ""}>${escapeHtml(c.nama_kelas)} (${escapeHtml(c.jenis_kelas || "kelas")})</option>`
+              )
               .join("")}
           </select>
         </div>
@@ -148,7 +173,7 @@ async function renderSesiAbsensi(container, state, user) {
       })
     );
 
-    const isActive = activeSession && activeSession.status_sesi === "aktif";
+    const isActive = Boolean(activeSession && activeSession.status_sesi === "aktif");
     const expiresDate = activeSession?.expires_at ? new Date(activeSession.expires_at) : null;
     const isExpired = expiresDate ? Date.now() > expiresDate.getTime() : false;
 
@@ -205,7 +230,7 @@ async function renderSesiAbsensi(container, state, user) {
           </button>
 
           ${
-            activeSession && isActive
+            isActive
               ? `
             <button type="button" id="btn-close-session" class="w-full py-2 px-4 rounded-xl text-xs font-semibold border border-rose-200 text-rose-700 hover:bg-rose-50 transition">
               Tutup Sesi Absensi
@@ -297,7 +322,7 @@ async function renderSesiAbsensi(container, state, user) {
       renderQrIntoElement(qrBox, buildCheckinUrl(activeSession.id, activeSession.session_token));
     }
 
-    // Buka / Putar PIN & QR Sesi Baru
+    // Buka / Putar PIN & QR Sesi Baru + Catat Kehadiran Pelatih
     panelContent.querySelector("#btn-open-session")?.addEventListener("click", async () => {
       const durationMin = Math.max(10, Number(panelContent.querySelector("#pin-duration-min")?.value) || 60);
       const now = new Date();
@@ -305,9 +330,9 @@ async function renderSesiAbsensi(container, state, user) {
       const pinCode = generatePinCode(4);
       const sessionToken = generateSessionToken();
       const sessionId = `sesi_${todayStr.replace(/-/g, "")}_${classId}_${Date.now().toString().slice(-4)}`;
+      const coachAttId = `catt_${todayStr.replace(/-/g, "")}_${classId}_${user.uid}`;
 
       try {
-        // Tutup sesi aktif sebelumnya pada kelas & tanggal ini agar hanya 1 sesi aktif
         for (const s of classSessions) {
           if (s.status_sesi === "aktif") {
             await updateDoc(doc(db, "attendance_sessions", s.id), {
@@ -328,7 +353,17 @@ async function renderSesiAbsensi(container, state, user) {
           expires_at: expiresAt.toISOString()
         });
 
-        showToast(`Sesi dibuka! PIN 4 digit: ${pinCode}`, "success");
+        await setDoc(doc(db, "coach_attendances", coachAttId), {
+          tanggal: todayStr,
+          class_id: classId,
+          session_id: sessionId,
+          coach_uid: user.uid,
+          nama_pelatih: user.nama || user.email,
+          status_kehadiran: "hadir",
+          waktu_catat: now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+        });
+
+        showToast(`Sesi dibuka & kehadiran pelatih tercatat! PIN: ${pinCode}`, "success");
         await refreshClassPanel(classId);
       } catch (err) {
         console.error(err);
@@ -631,7 +666,7 @@ async function renderProgramLatihan(container, state, user) {
 }
 
 // ============================================================================
-// 3. REKAP KEHADIRAN KELAS PELATIH (TERPISAH ATLET & SISWA)
+// 3. REKAP KEHADIRAN KELAS PELATIH (ATLET & SISWA)
 // ============================================================================
 async function renderRekapKelas(container, state) {
   const { coachClasses } = state;
@@ -653,8 +688,8 @@ async function renderRekapKelas(container, state) {
     <div class="bg-white rounded-2xl border border-slate-200 p-5 space-y-5">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 class="text-lg font-bold text-slate-800">Rekap Kehadiran Kelas (Atlet & Siswa Terpisah)</h2>
-          <p class="text-xs text-slate-500">Data kehadiran kelas yang diampu dikelompokkan terpisah antara Atlet dan Siswa.</p>
+          <h2 class="text-lg font-bold text-slate-800">Rekap Kehadiran Kelas</h2>
+          <p class="text-xs text-slate-500">Pantau kehadiran peserta pada kelas yang Anda ampu per tanggal.</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <input type="date" id="coach-rekap-date" value="${todayStr}" class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm" />
@@ -668,59 +703,9 @@ async function renderRekapKelas(container, state) {
         </div>
       </div>
 
-      <div id="coach-rekap-output" class="grid grid-cols-1 lg:grid-cols-2 gap-5"></div>
+      <div id="coach-rekap-output"></div>
     </div>
   `;
-
-  function buildSubTable(title, badgeClass, rows) {
-    if (rows.length === 0) {
-      return `
-        <div class="border border-slate-200 rounded-xl p-4">
-          <h3 class="font-bold text-slate-800 mb-2">${title} <span class="text-xs font-normal text-slate-400">(0)</span></h3>
-          <p class="text-xs text-slate-500">Belum ada data kehadiran ${title.toLowerCase()} pada tanggal ini.</p>
-        </div>
-      `;
-    }
-
-    return `
-      <div class="border border-slate-200 rounded-xl p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="font-bold text-slate-800">${title}</h3>
-          <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${badgeClass}">${rows.length} data</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs text-left">
-            <thead class="bg-slate-50 text-slate-600 uppercase border-b border-slate-200">
-              <tr>
-                <th class="py-2 px-2.5">Nama</th>
-                <th class="py-2 px-2.5">Kelas</th>
-                <th class="py-2 px-2.5">Status</th>
-                <th class="py-2 px-2.5">Validasi</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              ${rows
-                .map(
-                  (r) => `
-                <tr>
-                  <td class="py-2 px-2.5 font-semibold text-slate-800">${escapeHtml(r.nama_peserta || r.participant_id)}</td>
-                  <td class="py-2 px-2.5 text-slate-600">${escapeHtml(classMap[r.class_id]?.nama_kelas || r.class_id)}</td>
-                  <td class="py-2 px-2.5">
-                    <span class="px-2 py-0.5 rounded-full font-semibold border ${getStatusBadge(r.status_kehadiran)}">
-                      ${escapeHtml(r.status_kehadiran || "-")}
-                    </span>
-                  </td>
-                  <td class="py-2 px-2.5">${r.diverifikasi_pelatih ? "✓" : "Menunggu"}</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
 
   async function loadCoachRekap() {
     const targetDate = container.querySelector("#coach-rekap-date").value;
@@ -741,12 +726,45 @@ async function renderRekapKelas(container, state) {
       rows = rows.filter((r) => r.class_id === selectedClass);
     }
 
-    const atletRows = rows.filter((r) => r.kategori === "atlet");
-    const siswaRows = rows.filter((r) => r.kategori !== "atlet");
+    if (rows.length === 0) {
+      outputEl.innerHTML = `<p class="text-sm text-slate-500 py-4">Belum ada data kehadiran pada filter yang dipilih.</p>`;
+      return;
+    }
 
-    outputEl.innerHTML =
-      buildSubTable("Daftar Hadir Atlet", "bg-sky-100 text-sky-800", atletRows) +
-      buildSubTable("Daftar Hadir Siswa", "bg-indigo-100 text-indigo-800", siswaRows);
+    outputEl.innerHTML = `
+      <div class="overflow-x-auto border border-slate-200 rounded-xl">
+        <table class="w-full text-xs text-left">
+          <thead class="bg-slate-50 text-slate-600 uppercase border-b border-slate-200">
+            <tr>
+              <th class="py-2.5 px-3">Nama</th>
+              <th class="py-2.5 px-3">Kategori</th>
+              <th class="py-2.5 px-3">Kelas</th>
+              <th class="py-2.5 px-3">Status</th>
+              <th class="py-2.5 px-3">Validasi</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${rows
+              .map(
+                (r) => `
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-slate-800">${escapeHtml(r.nama_peserta || r.participant_id)}</td>
+                <td class="py-2.5 px-3 uppercase">${escapeHtml(r.kategori || "siswa")}</td>
+                <td class="py-2.5 px-3 text-slate-600">${escapeHtml(classMap[r.class_id]?.nama_kelas || r.class_id)}</td>
+                <td class="py-2.5 px-3">
+                  <span class="px-2 py-0.5 rounded-full font-semibold border ${getStatusBadge(r.status_kehadiran)}">
+                    ${escapeHtml(r.status_kehadiran || "-")}
+                  </span>
+                </td>
+                <td class="py-2.5 px-3">${r.diverifikasi_pelatih ? "✓ Tervalidasi" : "Menunggu"}</td>
+              </tr>
+            `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   container.querySelector("#btn-coach-rekap-load")?.addEventListener("click", loadCoachRekap);
