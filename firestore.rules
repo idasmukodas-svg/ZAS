@@ -1,0 +1,243 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDocPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserProfile() {
+      return isSignedIn() && exists(userDocPath());
+    }
+
+    function userData() {
+      return get(userDocPath()).data;
+    }
+
+    function getRole() {
+      return hasUserProfile() ? userData().role : "";
+    }
+
+    function isSuperAdmin() {
+      return getRole() == "super_admin";
+    }
+
+    function isAdminPelatih() {
+      return getRole() == "admin_pelatih";
+    }
+
+    function isPelatih() {
+      return getRole() == "pelatih";
+    }
+
+    function isCoachOrAdmin() {
+      return isSuperAdmin() || isAdminPelatih() || isPelatih();
+    }
+
+    function isOrangTua() {
+      return getRole() == "orang_tua";
+    }
+
+    function isAssignedToClass(classId) {
+      return hasUserProfile() &&
+        classId is string &&
+        classId != "" &&
+        (
+          ("assigned_classes" in userData() &&
+            userData().assigned_classes is list &&
+            classId in userData().assigned_classes) ||
+          (exists(/databases/$(database)/documents/classes/$(classId)) &&
+            "coach_uids" in get(/databases/$(database)/documents/classes/$(classId)).data &&
+            request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.coach_uids)
+        );
+    }
+
+    function isLinkedParticipant(participantId) {
+      return hasUserProfile() &&
+        participantId is string &&
+        participantId != "" &&
+        (
+          ("linked_participants" in userData() &&
+            userData().linked_participants is list &&
+            participantId in userData().linked_participants) ||
+          (exists(/databases/$(database)/documents/participants/$(participantId)) &&
+            get(/databases/$(database)/documents/participants/$(participantId)).data.parent_uid == request.auth.uid)
+        );
+    }
+
+    function hasActiveSessionForClass(classId, sessionId) {
+      return classId is string &&
+        sessionId is string &&
+        sessionId != "" &&
+        exists(/databases/$(database)/documents/attendance_sessions/$(sessionId)) &&
+        get(/databases/$(database)/documents/attendance_sessions/$(sessionId)).data.class_id == classId &&
+        get(/databases/$(database)/documents/attendance_sessions/$(sessionId)).data.status_sesi == "aktif" &&
+        (!("expires_at" in get(/databases/$(database)/documents/attendance_sessions/$(sessionId)).data) ||
+          request.time <= timestamp.fromISO8601(get(/databases/$(database)/documents/attendance_sessions/$(sessionId)).data.expires_at));
+    }
+
+    // ------------------------------------------------------------------------
+    // 1. USERS: Akun & Role (4 role: super_admin, admin_pelatih, pelatih, orang_tua)
+    // ------------------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin() || isAdminPelatih());
+
+      // Pendaftaran mandiri akun baru (default role harus orang_tua dan tidak boleh langsung super_admin)
+      allow create: if isSignedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.role == "orang_tua" &&
+        request.resource.data.status_akun == "aktif";
+
+      // Super Admin bisa mengubah role & data user manapun; user biasa hanya boleh update field profil tertentu miliknya sendiri (bukan role)
+      allow update: if isSuperAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.assigned_classes == resource.data.assigned_classes &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "nama",
+          "no_wa",
+          "linked_participants"
+        ])
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------
+    // 2. PARTICIPANTS: Database Atlet & Siswa
+    // ------------------------------------------------------------------------
+    match /participants/{participantId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id)) ||
+        (isOrangTua() && (resource.data.parent_uid == request.auth.uid || isLinkedParticipant(participantId)))
+      );
+
+      // Pendaftaran awal saat buat akun atau tambah anak pada akun orang tua
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (
+          isOrangTua() &&
+          request.resource.data.parent_uid == request.auth.uid &&
+          request.resource.data.status_keanggotaan == "pending_verifikasi" &&
+          request.resource.data.kategori in ["atlet", "siswa"]
+        )
+      );
+
+      // Verifikasi, pengkelasan, dan update data oleh Super Admin / Admin & Pelatih
+      allow update: if isSuperAdmin() || isAdminPelatih();
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------
+    // 3. CLASSES: Pengkelasan & Penugasan Pelatih
+    // ------------------------------------------------------------------------
+    match /classes/{classId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() || isAdminPelatih();
+    }
+
+    // ------------------------------------------------------------------------
+    // 4. TRAINING_PROGRAMS: Program Latihan Pelatih
+    // ------------------------------------------------------------------------
+    match /training_programs/{programId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id)) ||
+        (isOrangTua() && resource.data.tampilkan_ke_orangtua == true)
+      );
+
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(request.resource.data.class_id))
+      );
+
+      allow update, delete: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id))
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // 5. ATTENDANCE_SESSIONS: Sesi PIN 4 Digit & QR Code Kolam
+    // ------------------------------------------------------------------------
+    match /attendance_sessions/{sessionId} {
+      // Orang tua perlu membaca sesi aktif kelas anaknya untuk mencocokkan PIN / QR token
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id)) ||
+        isOrangTua()
+      );
+
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(request.resource.data.class_id))
+      );
+
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id))
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------
+    // 6. ATTENDANCES: Daftar Hadir Terpisah (Atlet & Siswa)
+    // ------------------------------------------------------------------------
+    match /attendances/{attendanceId} {
+      allow read: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id)) ||
+        (isOrangTua() && isLinkedParticipant(resource.data.participant_id))
+      );
+
+      // Orang tua bisa input check-in "hadir" (jika ada sesi aktif valid) atau ajukan "izin" / "sakit" untuk anaknya
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(request.resource.data.class_id)) ||
+        (
+          isOrangTua() &&
+          isLinkedParticipant(request.resource.data.participant_id) &&
+          request.resource.data.diinput_oleh_uid == request.auth.uid &&
+          request.resource.data.kategori in ["atlet", "siswa"] &&
+          request.resource.data.diverifikasi_pelatih == false &&
+          (
+            (
+              request.resource.data.status_kehadiran == "hadir" &&
+              hasActiveSessionForClass(request.resource.data.class_id, request.resource.data.session_id)
+            ) ||
+            request.resource.data.status_kehadiran in ["izin", "sakit"]
+          )
+        )
+      );
+
+      // Validasi & perubahan status oleh Pelatih / Admin & Pelatih / Super Admin
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        isAdminPelatih() ||
+        (isPelatih() && isAssignedToClass(resource.data.class_id))
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+  }
+}
