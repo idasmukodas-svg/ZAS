@@ -122,7 +122,7 @@ formLogin?.addEventListener("submit", async (e) => {
   }
 });
 
-// Submit Pendaftaran Orang Tua + Peserta Baru
+// Submit Pendaftaran Orang Tua + Atlet Baru
 formRegister?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const submitBtn = formRegister.querySelector('button[type="submit"]');
@@ -135,8 +135,20 @@ formRegister?.addEventListener("submit", async (e) => {
   const childName = document.getElementById("reg-child-name").value.trim();
   const childDob = document.getElementById("reg-child-dob").value;
   const childGender = document.getElementById("reg-child-gender").value;
-  const category = document.getElementById("reg-category").value;
-  const medical = document.getElementById("reg-medical").value.trim() || "Tidak ada catatan khusus";
+  const schoolName = document.getElementById("reg-school")?.value.trim() || "";
+  const medical = document.getElementById("reg-medical")?.value.trim() || "Tidak ada catatan khusus";
+
+  const birthYear = Number(String(childDob || "").slice(0, 4));
+  const age = birthYear ? Math.max(0, new Date().getFullYear() - birthYear) : null;
+  let kelompokUmur = "";
+  if (age !== null) {
+    if (age <= 9) kelompokUmur = "KU-5";
+    else if (age <= 11) kelompokUmur = "KU-4";
+    else if (age <= 13) kelompokUmur = "KU-3";
+    else if (age <= 15) kelompokUmur = "KU-2";
+    else if (age <= 18) kelompokUmur = "KU-1";
+    else kelompokUmur = "Senior";
+  }
 
   submitBtn.disabled = true;
   submitBtn.textContent = "Mengirim pendaftaran...";
@@ -167,8 +179,9 @@ formRegister?.addEventListener("submit", async (e) => {
       nama_panggilan: childName.split(" ")[0],
       tanggal_lahir: childDob,
       jenis_kelamin: childGender,
-      kelompok_umur: "",
-      kategori: category, // "atlet" | "siswa"
+      kelompok_umur: kelompokUmur,
+      asal_sekolah: schoolName,
+      kategori: "atlet",
       class_id: "",
       parent_uid: uid,
       nama_orang_tua: parentName,
@@ -181,7 +194,7 @@ formRegister?.addEventListener("submit", async (e) => {
     });
 
     await batch.commit();
-    showToast("Pendaftaran berhasil! Menunggu verifikasi admin/pelatih.", "success");
+    showToast("Pendaftaran atlet berhasil! Menunggu verifikasi admin/pelatih.", "success");
     formRegister.reset();
   } catch (err) {
     console.error("Register error:", err);
