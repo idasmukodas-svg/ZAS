@@ -1,12 +1,15 @@
-import { auth, db } from "./firebase-config.js";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  writeBatch,
+  collection,
+  query,
+  where,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
   getDoc,
   setDoc,
   writeBatch,
@@ -56,9 +59,33 @@ async function getOrCreateUserProfile(firebaseUser) {
     return { uid: firebaseUser.uid, ...snap.data() };
   }
 
+  // Cek apakah Super Admin sudah membuat profil pelatih/pengguna berdasarkan email ini
+  const normalizedEmail = (firebaseUser.email || "").trim().toLowerCase();
+  if (normalizedEmail) {
+    const q = query(collection(db, "users"), where("email", "==", normalizedEmail));
+    const preSnap = await getDocs(q);
+    const preDoc = preSnap.docs.find((d) => d.id !== firebaseUser.uid);
+
+    if (preDoc) {
+      const preData = preDoc.data();
+      const mergedProfile = {
+        ...preData,
+        email: normalizedEmail,
+        status_akun: preData.status_akun || "aktif",
+        created_at: preData.created_at || new Date().toISOString(),
+        linked_auth_at: new Date().toISOString()
+      };
+      await setDoc(userRef, mergedProfile);
+      if (preDoc.id.startsWith("coach_") || preDoc.id.startsWith("usr_")) {
+        await deleteDoc(doc(db, "users", preDoc.id));
+      }
+      return { uid: firebaseUser.uid, ...mergedProfile };
+    }
+  }
+
   const defaultProfile = {
-    nama: firebaseUser.email.split("@")[0],
-    email: firebaseUser.email,
+    nama: (firebaseUser.email || "user").split("@")[0],
+    email: normalizedEmail,
     no_wa: "",
     role: "orang_tua",
     assigned_classes: [],
