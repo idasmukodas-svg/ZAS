@@ -34,6 +34,25 @@ function slugifyId(text = "") {
     .replace(/^_|_$/g, "");
 }
 
+// Hitung usia tahun berjalan (per 1 Januari tahun ini / standar kompetisi) & tentukan KU
+function calculateAgeAndKU(dobString) {
+  if (!dobString) return { age: null, ku: "" };
+  const birthYear = Number(String(dobString).slice(0, 4));
+  if (!birthYear || Number.isNaN(birthYear)) return { age: null, ku: "" };
+
+  const currentYear = new Date().getFullYear();
+  const age = Math.max(0, currentYear - birthYear);
+
+  let ku = "Senior";
+  if (age <= 9) ku = "KU-5";
+  else if (age <= 11) ku = "KU-4";
+  else if (age <= 13) ku = "KU-3";
+  else if (age <= 15) ku = "KU-2";
+  else if (age <= 18) ku = "KU-1";
+
+  return { age, ku };
+}
+
 function downloadCsv(filename, rows) {
   if (!rows || !rows.length) {
     showToast("Tidak ada data untuk diekspor.", "warning");
@@ -73,8 +92,7 @@ async function fetchClubState() {
 // ============================================================================
 async function renderOverview(container, state) {
   const { users, classes, participants } = state;
-  const activeAtlet = participants.filter((p) => p.kategori === "atlet" && p.status_keanggotaan === "aktif").length;
-  const activeSiswa = participants.filter((p) => p.kategori === "siswa" && p.status_keanggotaan === "aktif").length;
+  const activeAtlet = participants.filter((p) => p.status_keanggotaan === "aktif").length;
   const pendingCount = participants.filter((p) => p.status_keanggotaan === "pending_verifikasi").length;
   const coachCount = users.filter((u) => ["pelatih", "admin_pelatih"].includes(u.role)).length;
 
@@ -84,7 +102,7 @@ async function renderOverview(container, state) {
     getDocs(query(collection(db, "coach_attendances"), where("tanggal", "==", todayStr)))
   ]);
 
-  const hadirSiswaHariIni = attSnap.docs
+  const hadirAtletHariIni = attSnap.docs
     .map((d) => d.data())
     .filter((a) => a.status_kehadiran === "hadir").length;
   const hadirPelatihHariIni = coachAttSnap.docs
@@ -100,14 +118,9 @@ async function renderOverview(container, state) {
 
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white rounded-2xl border border-slate-200 p-4">
-          <p class="text-xs font-semibold text-slate-500 uppercase">Atlet Aktif</p>
+          <p class="text-xs font-semibold text-slate-500 uppercase">Total Atlet Aktif</p>
           <p class="text-2xl font-bold text-sky-700 mt-1">${activeAtlet}</p>
-          <p class="text-xs text-slate-500 mt-1">Database atlet klub</p>
-        </div>
-        <div class="bg-white rounded-2xl border border-slate-200 p-4">
-          <p class="text-xs font-semibold text-slate-500 uppercase">Siswa Aktif</p>
-          <p class="text-2xl font-bold text-indigo-700 mt-1">${activeSiswa}</p>
-          <p class="text-xs text-emerald-700 mt-1">Hadir hari ini: ${hadirSiswaHariIni}</p>
+          <p class="text-xs text-emerald-700 mt-1">Hadir hari ini: ${hadirAtletHariIni}</p>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200 p-4">
           <p class="text-xs font-semibold text-slate-500 uppercase">Pelatih Aktif</p>
@@ -115,9 +128,14 @@ async function renderOverview(container, state) {
           <p class="text-xs text-emerald-700 mt-1">Hadir melatih hari ini: ${hadirPelatihHariIni}</p>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200 p-4">
+          <p class="text-xs font-semibold text-slate-500 uppercase">Kelas Latihan</p>
+          <p class="text-2xl font-bold text-indigo-700 mt-1">${classes.length}</p>
+          <p class="text-xs text-slate-500 mt-1">Kelompok latihan aktif</p>
+        </div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-4">
           <p class="text-xs font-semibold text-slate-500 uppercase">Menunggu Verifikasi</p>
           <p class="text-2xl font-bold text-amber-600 mt-1">${pendingCount}</p>
-          <p class="text-xs text-slate-500 mt-1">${classes.length} kelas tersedia</p>
+          <p class="text-xs text-slate-500 mt-1">Pendaftar baru</p>
         </div>
       </div>
 
@@ -132,9 +150,8 @@ async function renderOverview(container, state) {
               <thead class="bg-slate-50 text-slate-600 text-xs uppercase border-b border-slate-200">
                 <tr>
                   <th class="py-2.5 px-3">Nama Kelas</th>
-                  <th class="py-2.5 px-3">Jenis</th>
                   <th class="py-2.5 px-3">Pelatih</th>
-                  <th class="py-2.5 px-3">Peserta</th>
+                  <th class="py-2.5 px-3">Jumlah Atlet</th>
                   <th class="py-2.5 px-3">Status</th>
                 </tr>
               </thead>
@@ -148,7 +165,6 @@ async function renderOverview(container, state) {
                     return `
                       <tr>
                         <td class="py-2.5 px-3 font-semibold text-slate-800">${escapeHtml(cls.nama_kelas)}</td>
-                        <td class="py-2.5 px-3 uppercase text-xs font-semibold text-slate-600">${escapeHtml(cls.jenis_kelas || "-")}</td>
                         <td class="py-2.5 px-3 text-slate-600">${escapeHtml(coachNames || "Belum ditugaskan")}</td>
                         <td class="py-2.5 px-3">${memberCount}${cls.kapasitas_maks ? ` / ${cls.kapasitas_maks}` : ""}</td>
                         <td class="py-2.5 px-3">
@@ -182,8 +198,8 @@ async function renderVerifikasiDanKelas(container, state, user) {
       <div class="bg-white rounded-2xl border border-slate-200 p-5">
         <div class="flex items-center justify-between mb-4">
           <div>
-            <h2 class="text-lg font-bold text-slate-800">Verifikasi Pendaftar Baru</h2>
-            <p class="text-xs text-slate-500">Tetapkan kategori (Atlet / Siswa), kelas latihan, dan nomor induk.</p>
+            <h2 class="text-lg font-bold text-slate-800">Verifikasi Pendaftar Atlet Baru</h2>
+            <p class="text-xs text-slate-500">Tetapkan kelas latihan, kelompok usia (KU), asal sekolah, dan nomor induk atlet.</p>
           </div>
           <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
             ${pendingList.length} Pending
@@ -196,58 +212,63 @@ async function renderVerifikasiDanKelas(container, state, user) {
             : `
           <div class="space-y-4">
             ${pendingList
-              .map(
-                (pst) => `
-              <div class="border border-slate-200 rounded-xl p-4 bg-slate-50/60" data-verify-card="${pst.id}">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 pb-3 border-b border-slate-200">
-                  <div>
-                    <h3 class="font-bold text-slate-800">${escapeHtml(pst.nama_lengkap)} <span class="text-xs font-normal text-slate-500">(${escapeHtml(pst.jenis_kelamin || "-")}, Lahir: ${escapeHtml(pst.tanggal_lahir || "-")})</span></h3>
-                    <p class="text-xs text-slate-600 mt-0.5">Orang Tua: <strong>${escapeHtml(pst.nama_orang_tua || "-")}</strong> · WA: ${escapeHtml(pst.no_wa_darurat || "-")} · Medis: ${escapeHtml(pst.catatan_medis || "-")}</p>
-                  </div>
-                  <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 w-fit">Pilihan awal: ${escapeHtml(pst.kategori || "siswa")}</span>
-                </div>
+              .map((pst) => {
+                const autoKU = pst.kelompok_umur || calculateAgeAndKU(pst.tanggal_lahir).ku;
+                return `
+                  <div class="border border-slate-200 rounded-xl p-4 bg-slate-50/60" data-verify-card="${pst.id}">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 pb-3 border-b border-slate-200">
+                      <div>
+                        <h3 class="font-bold text-slate-800">${escapeHtml(pst.nama_lengkap)} <span class="text-xs font-normal text-slate-500">(${escapeHtml(pst.jenis_kelamin || "-")}, Lahir: ${escapeHtml(pst.tanggal_lahir || "-")})</span></h3>
+                        <p class="text-xs text-slate-600 mt-0.5">Orang Tua: <strong>${escapeHtml(pst.nama_orang_tua || "-")}</strong> · WA: ${escapeHtml(pst.no_wa_darurat || "-")} · Medis: ${escapeHtml(pst.catatan_medis || "-")}</p>
+                      </div>
+                      <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-sky-100 text-sky-800 w-fit">Calon Atlet</span>
+                    </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-                  <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kategori</label>
-                    <select class="ver-kategori w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-                      <option value="siswa" ${pst.kategori === "siswa" ? "selected" : ""}>Siswa</option>
-                      <option value="atlet" ${pst.kategori === "atlet" ? "selected" : ""}>Atlet</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas Latihan</label>
-                    <select class="ver-kelas w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-                      <option value="">-- Pilih Kelas --</option>
-                      ${classes
-                        .map(
-                          (c) =>
-                            `<option value="${c.id}" ${pst.class_id === c.id ? "selected" : ""}>${escapeHtml(c.nama_kelas)}</option>`
-                        )
-                        .join("")}
-                    </select>
-                  </div>
-                  <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kelompok Umur / Level</label>
-                    <input type="text" class="ver-ku w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white" value="${escapeHtml(pst.kelompok_umur || "")}" placeholder="Contoh: KU-4 / Pemula" />
-                  </div>
-                  <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">No. Induk Anggota</label>
-                    <input type="text" class="ver-nis w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white" value="${escapeHtml(pst.nomor_induk || "")}" placeholder="Contoh: CLB-2026-010" />
-                  </div>
-                </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+                      <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas Latihan</label>
+                        <select class="ver-kelas w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                          <option value="">-- Pilih Kelas --</option>
+                          ${classes
+                            .map(
+                              (c) =>
+                                `<option value="${c.id}" ${pst.class_id === c.id ? "selected" : ""}>${escapeHtml(c.nama_kelas)}</option>`
+                            )
+                            .join("")}
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Kelompok Usia (KU)</label>
+                        <select class="ver-ku w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                          <option value="KU-5" ${autoKU === "KU-5" ? "selected" : ""}>KU-5 (≤ 9 Thn)</option>
+                          <option value="KU-4" ${autoKU === "KU-4" ? "selected" : ""}>KU-4 (10-11 Thn)</option>
+                          <option value="KU-3" ${autoKU === "KU-3" ? "selected" : ""}>KU-3 (12-13 Thn)</option>
+                          <option value="KU-2" ${autoKU === "KU-2" ? "selected" : ""}>KU-2 (14-15 Thn)</option>
+                          <option value="KU-1" ${autoKU === "KU-1" ? "selected" : ""}>KU-1 (16-18 Thn)</option>
+                          <option value="Senior" ${autoKU === "Senior" ? "selected" : ""}>Senior (≥ 19 Thn)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Asal Sekolah</label>
+                        <input type="text" class="ver-school w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white" value="${escapeHtml(pst.asal_sekolah || "")}" placeholder="Nama sekolah atlet" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">No. Induk Atlet</label>
+                        <input type="text" class="ver-nis w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white" value="${escapeHtml(pst.nomor_induk || "")}" placeholder="Contoh: CLB-2026-010" />
+                      </div>
+                    </div>
 
-                <div class="flex justify-end gap-2 mt-3">
-                  <button type="button" data-action="reject-pst" data-id="${pst.id}" class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-rose-200 text-rose-700 hover:bg-rose-50">
-                    Tolak / Non-Aktifkan
-                  </button>
-                  <button type="button" data-action="approve-pst" data-id="${pst.id}" class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white">
-                    Setujui & Masukkan Kelas
-                  </button>
-                </div>
-              </div>
-            `
-              )
+                    <div class="flex justify-end gap-2 mt-3">
+                      <button type="button" data-action="reject-pst" data-id="${pst.id}" class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-rose-200 text-rose-700 hover:bg-rose-50">
+                        Tolak / Non-Aktifkan
+                      </button>
+                      <button type="button" data-action="approve-pst" data-id="${pst.id}" class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white">
+                        Setujui & Masukkan Kelas
+                      </button>
+                    </div>
+                  </div>
+                `;
+              })
               .join("")}
           </div>`
         }
@@ -255,24 +276,14 @@ async function renderVerifikasiDanKelas(container, state, user) {
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <form id="form-create-class" class="bg-white rounded-2xl border border-slate-200 p-5 space-y-3.5 h-fit">
-          <h3 class="text-base font-bold text-slate-800">Buat Kelas Baru</h3>
+          <h3 class="text-base font-bold text-slate-800">Buat Kelas Latihan Baru</h3>
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Kelas</label>
-            <input type="text" id="cls-name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Contoh: Prestasi A - Pagi / Pemula Sore" />
+            <input type="text" id="cls-name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Contoh: Prestasi Pagi / Pembinaan Sore" />
           </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Jenis Kelas</label>
-              <select id="cls-type" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-                <option value="atlet">Atlet</option>
-                <option value="siswa">Siswa</option>
-                <option value="campuran">Campuran</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">Kapasitas Maks</label>
-              <input type="number" id="cls-cap" min="1" value="20" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-            </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Kapasitas Maksimal Atlet</label>
+            <input type="number" id="cls-cap" min="1" value="20" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Jadwal Ringkas</label>
@@ -320,10 +331,7 @@ async function renderVerifikasiDanKelas(container, state, user) {
                   return `
                     <div class="border border-slate-200 rounded-xl p-4">
                       <div class="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <span class="font-bold text-slate-800">${escapeHtml(cls.nama_kelas)}</span>
-                          <span class="ml-2 text-xs font-semibold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">${escapeHtml(cls.jenis_kelas || "-")}</span>
-                        </div>
+                        <span class="font-bold text-slate-800">${escapeHtml(cls.nama_kelas)}</span>
                         <span class="text-xs text-slate-500">${escapeHtml(cls.jadwal_teks || "")}</span>
                       </div>
                       <div class="flex flex-wrap gap-1.5 mt-2.5">
@@ -355,7 +363,6 @@ async function renderVerifikasiDanKelas(container, state, user) {
   container.querySelector("#form-create-class")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const namaKelas = container.querySelector("#cls-name").value.trim();
-    const jenisKelas = container.querySelector("#cls-type").value;
     const kapasitasMaks = Number(container.querySelector("#cls-cap").value) || 20;
     const jadwalTeks = container.querySelector("#cls-schedule").value.trim();
     const coachUid = container.querySelector("#cls-coach").value;
@@ -369,7 +376,7 @@ async function renderVerifikasiDanKelas(container, state, user) {
     try {
       await setDoc(doc(db, "classes", classId), {
         nama_kelas: namaKelas,
-        jenis_kelas: jenisKelas,
+        jenis_kelas: "atlet",
         deskripsi,
         jadwal_teks: jadwalTeks,
         coach_uids: coachUids,
@@ -402,9 +409,9 @@ async function renderVerifikasiDanKelas(container, state, user) {
     if (action === "approve-pst") {
       const pstId = btn.dataset.id;
       const card = container.querySelector(`[data-verify-card="${pstId}"]`);
-      const kategori = card.querySelector(".ver-kategori").value;
       const classId = card.querySelector(".ver-kelas").value;
-      const kelompokUmur = card.querySelector(".ver-ku").value.trim();
+      const kelompokUmur = card.querySelector(".ver-ku").value;
+      const asalSekolah = card.querySelector(".ver-school").value.trim();
       const nomorInduk = card.querySelector(".ver-nis").value.trim() || `CLB-${new Date().getFullYear()}-${pstId.slice(-4).toUpperCase()}`;
 
       if (!classId) {
@@ -414,20 +421,21 @@ async function renderVerifikasiDanKelas(container, state, user) {
 
       try {
         await updateDoc(doc(db, "participants", pstId), {
-          kategori,
+          kategori: "atlet",
           class_id: classId,
           kelompok_umur: kelompokUmur,
+          asal_sekolah: asalSekolah,
           nomor_induk: nomorInduk,
           status_keanggotaan: "aktif",
           verified_by: user.uid,
           verified_at: new Date().toISOString()
         });
-        showToast("Peserta diverifikasi dan dimasukkan ke kelas.", "success");
+        showToast("Atlet diverifikasi dan dimasukkan ke kelas.", "success");
         const nextState = await fetchClubState();
         await renderVerifikasiDanKelas(container, nextState, user);
       } catch (err) {
         console.error(err);
-        showToast("Gagal memverifikasi peserta.", "error");
+        showToast("Gagal memverifikasi atlet.", "error");
       }
     }
 
@@ -790,9 +798,9 @@ async function renderRekapHadirPelatih(container, state) {
 }
 
 // ============================================================================
-// 5. DAFTAR HADIR SISWA (UNTUK PEMBAYARAN & CATATAN PRESTASI SISWA)
+// 5. DAFTAR HADIR ATLET (PEMBAYARAN, KU, ASAL SEKOLAH & CATATAN PRESTASI)
 // ============================================================================
-async function renderRekapHadirSiswa(container, state) {
+async function renderRekapHadirAtlet(container, state) {
   const { classes, participants, classMap } = state;
   const todayStr = getTodayISO();
   const participantMap = Object.fromEntries(participants.map((p) => [p.id, p]));
@@ -801,45 +809,58 @@ async function renderRekapHadirSiswa(container, state) {
     <div class="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 class="text-lg font-bold text-slate-800">Daftar Hadir Siswa (Pembayaran & Catatan Prestasi)</h2>
-          <p class="text-xs text-slate-500">Pantau kehadiran siswa beserta status pembayaran/iuran dan catatan prestasi/best time.</p>
+          <h2 class="text-lg font-bold text-slate-800">Daftar Hadir Atlet (Pembayaran & Catatan Prestasi)</h2>
+          <p class="text-xs text-slate-500">Pantau kehadiran atlet per tanggal, kelas, dan KU beserta status pembayaran dan catatan prestasi.</p>
         </div>
-        <button type="button" id="btn-export-siswa-att" class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white w-fit">
-          Export CSV Hadir Siswa
+        <button type="button" id="btn-export-atlet-att" class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white w-fit">
+          Export CSV Hadir Atlet
         </button>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
         <div>
           <label class="block text-xs font-semibold text-slate-600 mb-1">Tanggal</label>
-          <input type="date" id="filter-siswa-date" value="${todayStr}" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white" />
+          <input type="date" id="filter-atlet-date" value="${todayStr}" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas</label>
-          <select id="filter-siswa-class" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+          <select id="filter-atlet-class" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
             <option value="">Semua Kelas</option>
             ${classes.map((c) => `<option value="${c.id}">${escapeHtml(c.nama_kelas)}</option>`).join("")}
           </select>
         </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Filter KU (Usia)</label>
+          <select id="filter-atlet-ku" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+            <option value="">Semua KU</option>
+            <option value="KU-5">KU-5 (≤ 9 Thn)</option>
+            <option value="KU-4">KU-4 (10-11 Thn)</option>
+            <option value="KU-3">KU-3 (12-13 Thn)</option>
+            <option value="KU-2">KU-2 (14-15 Thn)</option>
+            <option value="KU-1">KU-1 (16-18 Thn)</option>
+            <option value="Senior">Senior (≥ 19 Thn)</option>
+          </select>
+        </div>
         <div class="flex items-end">
-          <button type="button" id="btn-load-siswa-att" class="w-full px-4 py-2 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-700 text-white">
-            Tampilkan Rekap Siswa
+          <button type="button" id="btn-load-atlet-att" class="w-full px-4 py-2 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-700 text-white">
+            Tampilkan Rekap Atlet
           </button>
         </div>
       </div>
 
-      <div id="siswa-att-table-wrap" class="overflow-x-auto">
-        <p class="text-sm text-slate-500 py-4">Memuat daftar hadir siswa...</p>
+      <div id="atlet-att-table-wrap" class="overflow-x-auto">
+        <p class="text-sm text-slate-500 py-4">Memuat daftar hadir atlet...</p>
       </div>
     </div>
   `;
 
-  let latestSiswaRows = [];
+  let latestAtletRows = [];
 
-  async function loadSiswaAttendance() {
-    const selectedDate = container.querySelector("#filter-siswa-date").value;
-    const selectedClass = container.querySelector("#filter-siswa-class").value;
-    const wrap = container.querySelector("#siswa-att-table-wrap");
+  async function loadAtletAttendance() {
+    const selectedDate = container.querySelector("#filter-atlet-date").value;
+    const selectedClass = container.querySelector("#filter-atlet-class").value;
+    const selectedKu = container.querySelector("#filter-atlet-ku").value;
+    const wrap = container.querySelector("#atlet-att-table-wrap");
 
     const q = selectedDate
       ? query(collection(db, "attendances"), where("tanggal", "==", selectedDate))
@@ -852,10 +873,18 @@ async function renderRekapHadirSiswa(container, state) {
       rows = rows.filter((r) => r.class_id === selectedClass);
     }
 
-    latestSiswaRows = rows;
+    if (selectedKu) {
+      rows = rows.filter((r) => {
+        const pst = participantMap[r.participant_id] || {};
+        const ku = pst.kelompok_umur || calculateAgeAndKU(pst.tanggal_lahir).ku;
+        return ku === selectedKu;
+      });
+    }
+
+    latestAtletRows = rows;
 
     if (rows.length === 0) {
-      wrap.innerHTML = `<p class="text-sm text-slate-500 py-4">Belum ada catatan kehadiran siswa pada filter yang dipilih.</p>`;
+      wrap.innerHTML = `<p class="text-sm text-slate-500 py-4">Belum ada catatan kehadiran atlet pada filter yang dipilih.</p>`;
       return;
     }
 
@@ -864,7 +893,8 @@ async function renderRekapHadirSiswa(container, state) {
         <thead class="bg-slate-50 text-slate-600 text-xs uppercase border-b border-slate-200">
           <tr>
             <th class="py-2.5 px-3">Tanggal</th>
-            <th class="py-2.5 px-3">Nama Siswa / Atlet</th>
+            <th class="py-2.5 px-3">Nama Atlet</th>
+            <th class="py-2.5 px-3">KU & Sekolah</th>
             <th class="py-2.5 px-3">Kelas</th>
             <th class="py-2.5 px-3">Hadir</th>
             <th class="py-2.5 px-3">Pembayaran / Iuran</th>
@@ -875,10 +905,15 @@ async function renderRekapHadirSiswa(container, state) {
           ${rows
             .map((r) => {
               const pst = participantMap[r.participant_id] || {};
+              const kuLabel = pst.kelompok_umur || calculateAgeAndKU(pst.tanggal_lahir).ku || "-";
               return `
                 <tr>
                   <td class="py-2.5 px-3 whitespace-nowrap">${escapeHtml(r.tanggal || "-")}</td>
                   <td class="py-2.5 px-3 font-semibold text-slate-800">${escapeHtml(r.nama_peserta || pst.nama_lengkap || r.participant_id)}</td>
+                  <td class="py-2.5 px-3 text-xs">
+                    <span class="px-2 py-0.5 rounded bg-sky-100 text-sky-800 font-bold">${escapeHtml(kuLabel)}</span>
+                    <div class="text-slate-500 mt-0.5">${escapeHtml(pst.asal_sekolah || "-")}</div>
+                  </td>
                   <td class="py-2.5 px-3 text-slate-600">${escapeHtml(classMap[r.class_id]?.nama_kelas || r.class_id || "-")}</td>
                   <td class="py-2.5 px-3">
                     <span class="px-2 py-0.5 rounded-full text-xs font-semibold border ${getStatusBadge(r.status_kehadiran)}">
@@ -896,15 +931,19 @@ async function renderRekapHadirSiswa(container, state) {
     `;
   }
 
-  container.querySelector("#btn-load-siswa-att")?.addEventListener("click", loadSiswaAttendance);
-  container.querySelector("#btn-export-siswa-att")?.addEventListener("click", () => {
+  container.querySelector("#btn-load-atlet-att")?.addEventListener("click", loadAtletAttendance);
+  container.querySelector("#btn-export-atlet-att")?.addEventListener("click", () => {
     const csvRows = [
-      ["Tanggal", "Nama Siswa", "Kelas", "Status Kehadiran", "Status Pembayaran", "Catatan Prestasi"],
-      ...latestSiswaRows.map((r) => {
+      ["Tanggal", "Nama Atlet", "Tanggal Lahir", "KU", "Asal Sekolah", "Kelas", "Status Kehadiran", "Status Pembayaran", "Catatan Prestasi"],
+      ...latestAtletRows.map((r) => {
         const pst = participantMap[r.participant_id] || {};
+        const kuLabel = pst.kelompok_umur || calculateAgeAndKU(pst.tanggal_lahir).ku || "";
         return [
           r.tanggal || "",
           r.nama_peserta || pst.nama_lengkap || r.participant_id || "",
+          pst.tanggal_lahir || "",
+          kuLabel,
+          pst.asal_sekolah || "",
           classMap[r.class_id]?.nama_kelas || r.class_id || "",
           r.status_kehadiran || "",
           pst.status_pembayaran || "Belum dicatat",
@@ -912,60 +951,82 @@ async function renderRekapHadirSiswa(container, state) {
         ];
       })
     ];
-    downloadCsv(`rekap-hadir-siswa-${container.querySelector("#filter-siswa-date").value || "all"}.csv`, csvRows);
+    downloadCsv(`rekap-hadir-atlet-${container.querySelector("#filter-atlet-date").value || "all"}.csv`, csvRows);
   });
 
-  await loadSiswaAttendance();
+  await loadAtletAttendance();
 }
 
 // ============================================================================
-// 6. INPUT & KELOLA DATABASE ATLET & SISWA DI APLIKASI
+// 6. INPUT & KELOLA DATABASE ATLET RESMI (TANGGAL LAHIR, SEKOLAH, KU, PRESTASI)
 // ============================================================================
-async function renderDatabasePeserta(container, state, user) {
+async function renderDatabaseAtlet(container, state, user) {
   const { participants, classes } = state;
 
   container.innerHTML = `
     <div class="space-y-6">
       <form id="form-add-participant" class="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
         <div>
-          <h2 class="text-lg font-bold text-slate-800">Tambah Atlet / Siswa ke Database</h2>
-          <p class="text-xs text-slate-500">Input langsung atlet atau siswa baru ke dalam database klub beserta status pembayaran dan catatan prestasi.</p>
+          <h2 class="text-lg font-bold text-slate-800">Tambah Atlet Resmi ke Database Klub</h2>
+          <p class="text-xs text-slate-500">Semua anggota tercatat sebagai Atlet resmi. Tanggal lahir wajib diisi untuk pengelompokan Kategori Usia (KU) dan seleksi lomba.</p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap</label>
-            <input type="text" id="pst-name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama lengkap atlet/siswa" />
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap Atlet *</label>
+            <input type="text" id="pst-name" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama lengkap sesuai akta/KK" />
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Kategori</label>
-            <select id="pst-category" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
-              <option value="atlet">Atlet</option>
-              <option value="siswa">Siswa</option>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Tanggal Lahir *</label>
+            <input type="date" id="pst-dob" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Kategori Usia (KU)</label>
+            <select id="pst-ku" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="AUTO">Otomatis dari Tanggal Lahir</option>
+              <option value="KU-5">KU-5 (≤ 9 Thn)</option>
+              <option value="KU-4">KU-4 (10-11 Thn)</option>
+              <option value="KU-3">KU-3 (12-13 Thn)</option>
+              <option value="KU-2">KU-2 (14-15 Thn)</option>
+              <option value="KU-1">KU-1 (16-18 Thn)</option>
+              <option value="Senior">Senior (≥ 19 Thn)</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas</label>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Asal Sekolah *</label>
+            <input type="text" id="pst-school" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Contoh: SDN 1 Singaparna / SMPN 1..." />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Jenis Kelamin</label>
+            <select id="pst-gender" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="L">Putra (L)</option>
+              <option value="P">Putri (P)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Kelas Latihan</label>
             <select id="pst-class" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
               <option value="">-- Pilih Kelas --</option>
               ${classes.map((c) => `<option value="${c.id}">${escapeHtml(c.nama_kelas)}</option>`).join("")}
             </select>
           </div>
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">No. Induk</label>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">No. Induk Atlet</label>
             <input type="text" id="pst-nis" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Contoh: CLB-2026-001" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Orang Tua & No. WA</label>
+            <div class="flex gap-1.5">
+              <input type="text" id="pst-parent" class="w-1/2 px-2.5 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama Ortu" />
+              <input type="tel" id="pst-wa" class="w-1/2 px-2.5 py-2 border border-slate-300 rounded-lg text-sm" placeholder="08..." />
+            </div>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">Nama Orang Tua / Wali</label>
-            <input type="text" id="pst-parent" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="Nama orang tua" />
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1">No. WA</label>
-            <input type="tel" id="pst-wa" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" placeholder="08..." />
-          </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-semibold text-slate-600 mb-1">Status Pembayaran / Iuran</label>
             <select id="pst-payment" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
@@ -981,23 +1042,30 @@ async function renderDatabasePeserta(container, state, user) {
         </div>
 
         <button type="submit" class="px-5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition">
-          Simpan ke Database
+          Simpan Atlet ke Database
         </button>
       </form>
 
       <div class="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h3 class="text-base font-bold text-slate-800">Daftar Atlet & Siswa (${participants.length})</h3>
-            <p class="text-xs text-slate-500">Perbarui kategori, kelas, pembayaran, atau catatan prestasi secara langsung.</p>
+            <h3 class="text-base font-bold text-slate-800">Database Atlet & Seleksi Usia / KU (${participants.length})</h3>
+            <p class="text-xs text-slate-500">Filter berdasarkan KU (Kategori Usia) atau cari nama, sekolah, dan catatan prestasi atlet.</p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <input type="text" id="db-search" placeholder="Cari nama / no. induk..." class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm" />
-            <select id="db-filter-kat" class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
-              <option value="">Semua Kategori</option>
-              <option value="atlet">Atlet</option>
-              <option value="siswa">Siswa</option>
+            <input type="text" id="db-search" placeholder="Cari nama / sekolah / prestasi..." class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm" />
+            <select id="db-filter-ku" class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+              <option value="">Semua KU</option>
+              <option value="KU-5">KU-5 (≤ 9 Thn)</option>
+              <option value="KU-4">KU-4 (10-11 Thn)</option>
+              <option value="KU-3">KU-3 (12-13 Thn)</option>
+              <option value="KU-2">KU-2 (14-15 Thn)</option>
+              <option value="KU-1">KU-1 (16-18 Thn)</option>
+              <option value="Senior">Senior (≥ 19 Thn)</option>
             </select>
+            <button type="button" id="btn-export-db-atlet" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white">
+              Export CSV Seleksi
+            </button>
           </div>
         </div>
 
@@ -1006,10 +1074,23 @@ async function renderDatabasePeserta(container, state, user) {
     </div>
   `;
 
+  // Otomatis set dropdown KU saat tanggal lahir dipilih
+  const dobInput = container.querySelector("#pst-dob");
+  const kuSelectForm = container.querySelector("#pst-ku");
+  dobInput?.addEventListener("change", () => {
+    const { ku } = calculateAgeAndKU(dobInput.value);
+    if (ku && kuSelectForm) {
+      kuSelectForm.value = ku;
+    }
+  });
+
   container.querySelector("#form-add-participant")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const namaLengkap = container.querySelector("#pst-name").value.trim();
-    const kategori = container.querySelector("#pst-category").value;
+    const tanggalLahir = container.querySelector("#pst-dob").value;
+    const rawKu = container.querySelector("#pst-ku").value;
+    const asalSekolah = container.querySelector("#pst-school").value.trim();
+    const jenisKelamin = container.querySelector("#pst-gender").value;
     const classId = container.querySelector("#pst-class").value;
     const nomorInduk = container.querySelector("#pst-nis").value.trim();
     const namaOrangTua = container.querySelector("#pst-parent").value.trim();
@@ -1017,16 +1098,25 @@ async function renderDatabasePeserta(container, state, user) {
     const statusPembayaran = container.querySelector("#pst-payment").value;
     const catatanPrestasi = container.querySelector("#pst-achievement").value.trim();
 
-    if (!namaLengkap) return;
+    if (!namaLengkap || !tanggalLahir) {
+      showToast("Nama lengkap dan tanggal lahir atlet wajib diisi.", "warning");
+      return;
+    }
 
-    const pstId = `pst_${slugifyId(namaLengkap) || "peserta"}_${Date.now().toString().slice(-4)}`;
+    const { ku: calculatedKu } = calculateAgeAndKU(tanggalLahir);
+    const kelompokUmur = rawKu === "AUTO" || !rawKu ? calculatedKu : rawKu;
+    const pstId = `pst_${slugifyId(namaLengkap) || "atlet"}_${Date.now().toString().slice(-4)}`;
 
     try {
       await setDoc(doc(db, "participants", pstId), {
         nomor_induk: nomorInduk,
         nama_lengkap: namaLengkap,
         nama_panggilan: namaLengkap.split(" ")[0],
-        kategori,
+        tanggal_lahir: tanggalLahir,
+        kelompok_umur: kelompokUmur,
+        asal_sekolah: asalSekolah,
+        jenis_kelamin: jenisKelamin,
+        kategori: "atlet",
         class_id: classId,
         nama_orang_tua: namaOrangTua,
         no_wa_darurat: noWaDarurat,
@@ -1038,35 +1128,40 @@ async function renderDatabasePeserta(container, state, user) {
         created_at: new Date().toISOString()
       });
 
-      showToast(`${namaLengkap} (${kategori}) berhasil ditambahkan ke database.`, "success");
+      showToast(`Atlet ${namaLengkap} (${kelompokUmur}) berhasil ditambahkan.`, "success");
       const nextState = await fetchClubState();
-      await renderDatabasePeserta(container, nextState, user);
+      await renderDatabaseAtlet(container, nextState, user);
     } catch (err) {
       console.error(err);
-      showToast("Gagal menambahkan peserta ke database.", "error");
+      showToast("Gagal menambahkan atlet ke database.", "error");
     }
   });
 
   const wrap = container.querySelector("#db-table-wrap");
   const searchInput = container.querySelector("#db-search");
-  const katSelect = container.querySelector("#db-filter-kat");
+  const kuFilterSelect = container.querySelector("#db-filter-ku");
+  let currentFilteredAtlet = [];
 
   function drawTable() {
     const keyword = (searchInput.value || "").toLowerCase().trim();
-    const katFilter = katSelect.value;
+    const kuFilter = kuFilterSelect.value;
 
     const filtered = participants.filter((p) => {
-      const matchKat = !katFilter || p.kategori === katFilter;
+      const effectiveKu = p.kelompok_umur || calculateAgeAndKU(p.tanggal_lahir).ku;
+      const matchKu = !kuFilter || effectiveKu === kuFilter;
       const matchSearch =
         !keyword ||
         (p.nama_lengkap || "").toLowerCase().includes(keyword) ||
+        (p.asal_sekolah || "").toLowerCase().includes(keyword) ||
         (p.nomor_induk || "").toLowerCase().includes(keyword) ||
         (p.catatan_prestasi || "").toLowerCase().includes(keyword);
-      return matchKat && matchSearch;
+      return matchKu && matchSearch;
     });
 
+    currentFilteredAtlet = filtered;
+
     if (filtered.length === 0) {
-      wrap.innerHTML = `<p class="text-sm text-slate-500 py-4">Tidak ada data peserta yang cocok.</p>`;
+      wrap.innerHTML = `<p class="text-sm text-slate-500 py-4">Tidak ada data atlet yang cocok dengan filter.</p>`;
       return;
     }
 
@@ -1074,8 +1169,9 @@ async function renderDatabasePeserta(container, state, user) {
       <table class="w-full text-sm text-left">
         <thead class="bg-slate-50 text-slate-600 text-xs uppercase border-b border-slate-200">
           <tr>
-            <th class="py-2.5 px-3">Nama & No. Induk</th>
-            <th class="py-2.5 px-3">Kategori</th>
+            <th class="py-2.5 px-3">Atlet & No. Induk</th>
+            <th class="py-2.5 px-3">Tgl Lahir & KU</th>
+            <th class="py-2.5 px-3">Asal Sekolah</th>
             <th class="py-2.5 px-3">Kelas</th>
             <th class="py-2.5 px-3">Pembayaran</th>
             <th class="py-2.5 px-3">Catatan Prestasi</th>
@@ -1084,48 +1180,61 @@ async function renderDatabasePeserta(container, state, user) {
         </thead>
         <tbody class="divide-y divide-slate-100">
           ${filtered
-            .map(
-              (p) => `
-            <tr data-pst-row="${p.id}">
-              <td class="py-2.5 px-3">
-                <div class="font-semibold text-slate-800">${escapeHtml(p.nama_lengkap)}</div>
-                <div class="text-xs text-slate-500">${escapeHtml(p.nomor_induk || "-")}</div>
-              </td>
-              <td class="py-2.5 px-3">
-                <select class="pst-kat px-2 py-1 border border-slate-300 rounded text-xs bg-white">
-                  <option value="atlet" ${p.kategori === "atlet" ? "selected" : ""}>Atlet</option>
-                  <option value="siswa" ${p.kategori === "siswa" ? "selected" : ""}>Siswa</option>
-                </select>
-              </td>
-              <td class="py-2.5 px-3">
-                <select class="pst-cls px-2 py-1 border border-slate-300 rounded text-xs bg-white">
-                  <option value="">-- Tanpa Kelas --</option>
-                  ${classes
-                    .map(
-                      (c) =>
-                        `<option value="${c.id}" ${p.class_id === c.id ? "selected" : ""}>${escapeHtml(c.nama_kelas)}</option>`
-                    )
-                    .join("")}
-                </select>
-              </td>
-              <td class="py-2.5 px-3">
-                <select class="pst-pay px-2 py-1 border border-slate-300 rounded text-xs bg-white">
-                  <option value="Lunas" ${p.status_pembayaran === "Lunas" ? "selected" : ""}>Lunas</option>
-                  <option value="Belum Lunas" ${p.status_pembayaran === "Belum Lunas" ? "selected" : ""}>Belum Lunas</option>
-                  <option value="Beasiswa / Khusus" ${p.status_pembayaran === "Beasiswa / Khusus" ? "selected" : ""}>Beasiswa / Khusus</option>
-                </select>
-              </td>
-              <td class="py-2.5 px-3">
-                <input type="text" class="pst-ach w-44 px-2 py-1 border border-slate-300 rounded text-xs" value="${escapeHtml(p.catatan_prestasi || "")}" placeholder="Catatan prestasi..." />
-              </td>
-              <td class="py-2.5 px-3">
-                <button type="button" data-action="update-pst" data-id="${p.id}" class="px-3 py-1 rounded bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold">
-                  Simpan
-                </button>
-              </td>
-            </tr>
-          `
-            )
+            .map((p) => {
+              const { age, ku: autoKu } = calculateAgeAndKU(p.tanggal_lahir);
+              const effectiveKu = p.kelompok_umur || autoKu || "KU-4";
+              return `
+                <tr data-pst-row="${p.id}">
+                  <td class="py-2.5 px-3">
+                    <div class="font-semibold text-slate-800">${escapeHtml(p.nama_lengkap)} <span class="text-xs font-normal text-slate-400">(${escapeHtml(p.jenis_kelamin || "-")})</span></div>
+                    <div class="text-xs text-slate-500">${escapeHtml(p.nomor_induk || "-")}</div>
+                  </td>
+                  <td class="py-2.5 px-3 space-y-1">
+                    <input type="date" class="pst-dob px-2 py-1 border border-slate-300 rounded text-xs" value="${escapeHtml(p.tanggal_lahir || "")}" />
+                    <div class="flex items-center gap-1.5">
+                      <select class="pst-ku px-2 py-0.5 border border-slate-300 rounded text-xs font-bold bg-sky-50 text-sky-800">
+                        <option value="KU-5" ${effectiveKu === "KU-5" ? "selected" : ""}>KU-5</option>
+                        <option value="KU-4" ${effectiveKu === "KU-4" ? "selected" : ""}>KU-4</option>
+                        <option value="KU-3" ${effectiveKu === "KU-3" ? "selected" : ""}>KU-3</option>
+                        <option value="KU-2" ${effectiveKu === "KU-2" ? "selected" : ""}>KU-2</option>
+                        <option value="KU-1" ${effectiveKu === "KU-1" ? "selected" : ""}>KU-1</option>
+                        <option value="Senior" ${effectiveKu === "Senior" ? "selected" : ""}>Senior</option>
+                      </select>
+                      ${age !== null ? `<span class="text-[11px] text-slate-500">(${age} th)</span>` : ""}
+                    </div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <input type="text" class="pst-school w-36 px-2 py-1 border border-slate-300 rounded text-xs" value="${escapeHtml(p.asal_sekolah || "")}" placeholder="Asal sekolah..." />
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <select class="pst-cls px-2 py-1 border border-slate-300 rounded text-xs bg-white">
+                      <option value="">-- Tanpa Kelas --</option>
+                      ${classes
+                        .map(
+                          (c) =>
+                            `<option value="${c.id}" ${p.class_id === c.id ? "selected" : ""}>${escapeHtml(c.nama_kelas)}</option>`
+                        )
+                        .join("")}
+                    </select>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <select class="pst-pay px-2 py-1 border border-slate-300 rounded text-xs bg-white">
+                      <option value="Lunas" ${p.status_pembayaran === "Lunas" ? "selected" : ""}>Lunas</option>
+                      <option value="Belum Lunas" ${p.status_pembayaran === "Belum Lunas" ? "selected" : ""}>Belum Lunas</option>
+                      <option value="Beasiswa / Khusus" ${p.status_pembayaran === "Beasiswa / Khusus" ? "selected" : ""}>Beasiswa / Khusus</option>
+                    </select>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <input type="text" class="pst-ach w-40 px-2 py-1 border border-slate-300 rounded text-xs" value="${escapeHtml(p.catatan_prestasi || "")}" placeholder="Catatan prestasi..." />
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <button type="button" data-action="update-pst" data-id="${p.id}" class="px-3 py-1 rounded bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold">
+                      Simpan
+                    </button>
+                  </td>
+                </tr>
+              `;
+            })
             .join("")}
         </tbody>
       </table>
@@ -1133,33 +1242,65 @@ async function renderDatabasePeserta(container, state, user) {
   }
 
   searchInput?.addEventListener("input", drawTable);
-  katSelect?.addEventListener("change", drawTable);
+  kuFilterSelect?.addEventListener("change", drawTable);
+
+  container.querySelector("#btn-export-db-atlet")?.addEventListener("click", () => {
+    const csvRows = [
+      ["No. Induk", "Nama Atlet", "L/P", "Tanggal Lahir", "Usia (Thn)", "KU", "Asal Sekolah", "Kelas", "Status Pembayaran", "Catatan Prestasi"],
+      ...currentFilteredAtlet.map((p) => {
+        const { age, ku: autoKu } = calculateAgeAndKU(p.tanggal_lahir);
+        return [
+          p.nomor_induk || "",
+          p.nama_lengkap || "",
+          p.jenis_kelamin || "",
+          p.tanggal_lahir || "",
+          age !== null ? age : "",
+          p.kelompok_umur || autoKu || "",
+          p.asal_sekolah || "",
+          state.classMap[p.class_id]?.nama_kelas || "",
+          p.status_pembayaran || "",
+          p.catatan_prestasi || ""
+        ];
+      })
+    ];
+    downloadCsv(`database-seleksi-atlet-${kuFilterSelect.value || "semua-ku"}.csv`, csvRows);
+  });
 
   container.addEventListener("click", async (e) => {
     const btn = e.target.closest('button[data-action="update-pst"]');
     if (!btn) return;
     const pstId = btn.dataset.id;
     const row = container.querySelector(`tr[data-pst-row="${pstId}"]`);
-    const kategori = row.querySelector(".pst-kat").value;
+    const tanggalLahir = row.querySelector(".pst-dob").value;
+    const kelompokUmur = row.querySelector(".pst-ku").value;
+    const asalSekolah = row.querySelector(".pst-school").value.trim();
     const classId = row.querySelector(".pst-cls").value;
     const statusPembayaran = row.querySelector(".pst-pay").value;
     const catatanPrestasi = row.querySelector(".pst-ach").value.trim();
 
+    if (!tanggalLahir) {
+      showToast("Tanggal lahir atlet wajib diisi.", "warning");
+      return;
+    }
+
     try {
       await updateDoc(doc(db, "participants", pstId), {
-        kategori,
+        kategori: "atlet",
+        tanggal_lahir: tanggalLahir,
+        kelompok_umur: kelompokUmur,
+        asal_sekolah: asalSekolah,
         class_id: classId,
         status_pembayaran: statusPembayaran,
         catatan_prestasi: catatanPrestasi,
         updated_by: user.uid,
         updated_at: new Date().toISOString()
       });
-      showToast("Data peserta diperbarui.", "success");
+      showToast("Data atlet berhasil diperbarui.", "success");
       const nextState = await fetchClubState();
-      await renderDatabasePeserta(container, nextState, user);
+      await renderDatabaseAtlet(container, nextState, user);
     } catch (err) {
       console.error(err);
-      showToast("Gagal memperbarui data peserta.", "error");
+      showToast("Gagal memperbarui data atlet.", "error");
     }
   });
 
@@ -1186,10 +1327,10 @@ export async function renderView({ container, view, user }) {
       await renderRekapHadirPelatih(container, state);
       break;
     case "absensi_siswa":
-      await renderRekapHadirSiswa(container, state);
+      await renderRekapHadirAtlet(container, state);
       break;
     case "database":
-      await renderDatabasePeserta(container, state, user);
+      await renderDatabaseAtlet(container, state, user);
       break;
     default:
       await renderOverview(container, state);
